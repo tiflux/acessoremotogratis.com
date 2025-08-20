@@ -1,19 +1,16 @@
-#[cfg(target_os = "windows")]
-use crate::ipc::ClipboardNonFile;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::ipc::Connection;
 #[cfg(not(any(target_os = "ios")))]
-use crate::{
-    clipboard::ClipboardSide,
-    ipc::{self, Data},
-};
+use crate::ipc::{self, Data};
+#[cfg(target_os = "windows")]
+use crate::{clipboard::ClipboardSide, ipc::ClipboardNonFile};
 #[cfg(target_os = "windows")]
 use clipboard::ContextSend;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::tokio::sync::mpsc::unbounded_channel;
 use hbb_common::{
     allow_err,
-    config::{keys::*, option2bool, Config},
+    config::Config,
     fs::is_write_need_confirmation,
     fs::{self, get_string, new_send_confirm, DigestCheckResult},
     log,
@@ -25,12 +22,16 @@ use hbb_common::{
         task::spawn_blocking,
     },
 };
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-use hbb_common::{tokio::sync::Mutex as TokioMutex, ResultType};
+#[cfg(target_os = "windows")]
+use hbb_common::{
+    config::{keys::*, option2bool},
+    tokio::sync::Mutex as TokioMutex,
+    ResultType,
+};
 use serde_derive::Serialize;
 #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 use std::iter::FromIterator;
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "windows")]
 use std::sync::Arc;
 use std::{
     collections::HashMap,
@@ -48,6 +49,7 @@ pub struct Client {
     pub disconnected: bool,
     pub is_file_transfer: bool,
     pub is_view_camera: bool,
+    pub is_terminal: bool,
     pub port_forward: String,
     pub name: String,
     pub peer_id: String,
@@ -130,6 +132,7 @@ impl<T: InvokeUiCM> ConnectionManager<T> {
         id: i32,
         is_file_transfer: bool,
         is_view_camera: bool,
+        is_terminal: bool,
         port_forward: String,
         peer_id: String,
         name: String,
@@ -150,6 +153,7 @@ impl<T: InvokeUiCM> ConnectionManager<T> {
             disconnected: false,
             is_file_transfer,
             is_view_camera,
+            is_terminal,
             port_forward,
             name: name.clone(),
             peer_id: peer_id.clone(),
@@ -206,7 +210,7 @@ impl<T: InvokeUiCM> ConnectionManager<T> {
             .read()
             .unwrap()
             .iter()
-            .filter(|(_k, v)| !v.is_file_transfer)
+            .filter(|(_k, v)| !v.is_file_transfer && !v.is_terminal)
             .next()
             .is_none()
         {
@@ -405,9 +409,9 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                         }
                         Ok(Some(data)) => {
                             match data {
-                                Data::Login{id, is_file_transfer, is_view_camera, port_forward, peer_id, name, authorized, keyboard, clipboard, audio, file, file_transfer_enabled: _file_transfer_enabled, restart, recording, block_input, from_switch} => {
+                                Data::Login{id, is_file_transfer, is_view_camera, is_terminal, port_forward, peer_id, name, authorized, keyboard, clipboard, audio, file, file_transfer_enabled: _file_transfer_enabled, restart, recording, block_input, from_switch} => {
                                     log::debug!("conn_id: {}", id);
-                                    self.cm.add_connection(id, is_file_transfer, is_view_camera, port_forward, peer_id, name, authorized, keyboard, clipboard, audio, file, restart, recording, block_input, from_switch, self.tx.clone());
+                                    self.cm.add_connection(id, is_file_transfer, is_view_camera, is_terminal, port_forward, peer_id, name, authorized, keyboard, clipboard, audio, file, restart, recording, block_input, from_switch, self.tx.clone());
                                     self.conn_id = id;
                                     #[cfg(target_os = "windows")]
                                     {
@@ -676,6 +680,7 @@ pub async fn start_listen<T: InvokeUiCM>(
                 id,
                 is_file_transfer,
                 is_view_camera,
+                is_terminal,
                 port_forward,
                 peer_id,
                 name,
@@ -695,6 +700,7 @@ pub async fn start_listen<T: InvokeUiCM>(
                     id,
                     is_file_transfer,
                     is_view_camera,
+                    is_terminal,
                     port_forward,
                     peer_id,
                     name,
